@@ -1,4 +1,4 @@
-const BASE_URL = "http://localhost:5001/api/v1";
+const BASE_URL = "https://fashion-be-nfrg.onrender.com/api/v1";
 
 const getHeaders = () => {
   const headers = {
