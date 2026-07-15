@@ -35,18 +35,26 @@ export default function Products() {
   const [collections, setCollections] = useState([]);
 
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
-  const [isVariantModalOpen, setIsVariantModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
-  const [selectedProductForVariants, setSelectedProductForVariants] = useState(null);
+  const [modalVariants, setModalVariants] = useState([]);
 
   const [productForm, setProductForm] = useState({
     name: "", slug: "", sku: "", brand: "", category: "", subcategory: "",
     description: "", materials: "", careInstructions: "", images: "",
-    price: 350, availability: true, collectionRef: ""
+    price: 350, salePrice: "", availability: true, collectionRef: ""
   });
 
   const [variantForm, setVariantForm] = useState({
-    color: "", size: "", price: 350, stock: 5, sku: ""
+    color: "",
+    size: "",
+    mrp: 350,
+    sellingPrice: 350,
+    costPrice: 150,
+    weight: 300,
+    stock: 10,
+    sku: "",
+    images: "",
+    showcase: false
   });
 
   const [loadingForm, setLoadingForm] = useState(false);
@@ -73,7 +81,7 @@ export default function Products() {
           newUrls.push(res.data.url);
         }
       }
-      setProductForm(prev => {
+      setVariantForm(prev => {
         const currentImgs = prev.images
           ? prev.images.split(",").map(i => i.trim()).filter(Boolean)
           : [];
@@ -95,10 +103,22 @@ export default function Products() {
     loadLookups();
   }, []);
 
+  useEffect(() => {
+    if (colors.length > 0 && !variantForm.color) {
+      setVariantForm(prev => ({ ...prev, color: colors[0]._id }));
+    }
+  }, [colors]);
+
+  useEffect(() => {
+    if (sizes.length > 0 && !variantForm.size) {
+      setVariantForm(prev => ({ ...prev, size: sizes[0]._id }));
+    }
+  }, [sizes]);
+
   async function loadProducts() {
     try {
       setLoading(true);
-      const res = await api.products.list({ limit: 100 });
+      const res = await api.products.list({ limit: 100, status: "all" });
       setProducts(res.data || []);
     } catch (err) {
       console.error("Failed to load products:", err);
@@ -130,7 +150,18 @@ export default function Products() {
 
   const openAddProduct = () => {
     setEditingProduct(null);
-    setProductForm({ name: "", slug: "", sku: "", brand: "", category: "", subcategory: "", description: "", materials: "", careInstructions: "", images: "", price: 350, availability: true, collectionRef: "" });
+    setProductForm({ name: "", slug: "", sku: "", brand: "", category: "", subcategory: "", description: "", materials: "", careInstructions: "", images: "", price: 350, salePrice: "", availability: true, collectionRef: "" });
+    setModalVariants([]);
+    setVariantForm({
+      color: colors[0]?._id || "",
+      size: sizes[0]?._id || "",
+      mrp: 350,
+      sellingPrice: 350,
+      costPrice: 150,
+      weight: 300,
+      stock: 10,
+      sku: ""
+    });
     setIsProductModalOpen(true);
   };
 
@@ -144,9 +175,21 @@ export default function Products() {
       description: p.description || "", materials: p.materials || "",
       careInstructions: p.careInstructions || "",
       images: p.images ? p.images.join(", ") : "",
-      price: p.variants?.[0]?.prices?.mrp || 350,
-      availability: p.availability ?? true,
+      price: p.price || 350,
+      salePrice: p.salePrice || "",
+      availability: p.status === "Active",
       collectionRef: p.collectionRef?._id || p.collectionRef || ""
+    });
+    setModalVariants(p.variants || []);
+    setVariantForm({
+      color: colors[0]?._id || "",
+      size: sizes[0]?._id || "",
+      mrp: p.price || 350,
+      sellingPrice: p.price || 350,
+      costPrice: Math.round((p.price || 350) * 0.4),
+      weight: 300,
+      stock: 10,
+      sku: `${p.sku}-VAR`
     });
     setIsProductModalOpen(true);
   };
@@ -157,18 +200,44 @@ export default function Products() {
     const parsedImages = productForm.images
       ? productForm.images.split(",").map(img => img.trim()).filter(Boolean)
       : [];
+    const isNew = !editingProduct;
     const payload = {
-      ...productForm, images: parsedImages, price: Number(productForm.price),
+      ...productForm,
+      images: parsedImages,
+      price: Number(productForm.price),
+      salePrice: productForm.salePrice ? Number(productForm.salePrice) : null,
+      status: isNew ? "Draft" : (productForm.availability ? "Active" : "Draft"),
       brand: productForm.brand || undefined,
       category: productForm.category || undefined,
       subcategory: productForm.subcategory || undefined,
       collectionRef: productForm.collectionRef || null
     };
+
     try {
       if (editingProduct) {
         await api.products.update(editingProduct._id, payload);
       } else {
-        await api.products.create(payload);
+        const res = await api.products.create(payload);
+        const newProductId = res.data?._id;
+
+        if (newProductId && modalVariants.length > 0) {
+          for (const variant of modalVariants) {
+            const varPayload = {
+              color: variant.color,
+              size: variant.size,
+              sku: variant.sku,
+              stock: variant.stock,
+              weight: variant.weight,
+              prices: variant.prices,
+              images: parsedImages.length > 0 ? parsedImages : ["/images/products/placeholder.jpg"]
+            };
+            try {
+              await api.products.createVariant(newProductId, varPayload);
+            } catch (err) {
+              console.error("Failed to create variant:", variant.sku, err);
+            }
+          }
+        }
       }
       setIsProductModalOpen(false);
       loadProducts();
@@ -189,39 +258,99 @@ export default function Products() {
     }
   };
 
-  const openVariantsModal = (p) => {
-    setSelectedProductForVariants(p);
-    setVariantForm({ color: colors[0]?._id || "", size: sizes[0]?._id || "", price: p.price || 350, stock: 10, sku: `${p.sku}-VAR` });
-    setIsVariantModalOpen(true);
-  };
-
-  const handleAddVariant = async (e) => {
+  const handleModalAddVariant = async (e) => {
     e.preventDefault();
-    if (!selectedProductForVariants) return;
-    setLoadingForm(true);
-    try {
-      await api.products.createVariant(selectedProductForVariants._id, {
-        ...variantForm, price: Number(variantForm.price), stock: Number(variantForm.stock)
-      });
-      const res = await api.products.getById(selectedProductForVariants._id);
-      setSelectedProductForVariants(res.data);
-      loadProducts();
-    } catch (err) {
-      alert(err.message || "Failed to create variant.");
-    } finally {
-      setLoadingForm(false);
+    if (!variantForm.color || !variantForm.size) {
+      alert("Please select both Color and Size.");
+      return;
+    }
+
+    const colorObj = colors.find(c => c._id === variantForm.color);
+    const sizeObj = sizes.find(s => s._id === variantForm.size);
+
+    const baseM = Number(productForm.price) || 350;
+    const parsedImages = variantForm.images
+      ? variantForm.images.split(",").map(i => i.trim()).filter(Boolean)
+      : ["/images/products/placeholder.jpg"];
+
+    const newVar = {
+      color: variantForm.color,
+      size: variantForm.size,
+      sku: variantForm.sku.trim() || `${productForm.sku}-${colorObj?.hex.replace("#", "") || "COL"}-${sizeObj?.name || "SZ"}`.toUpperCase(),
+      stock: Number(variantForm.stock),
+      weight: Number(variantForm.weight),
+      prices: {
+        mrp: baseM,
+        sellingPrice: baseM,
+        costPrice: Math.round(baseM * 0.45),
+      },
+      images: parsedImages,
+      showcase: variantForm.showcase || false,
+      colorDetails: colorObj,
+      sizeDetails: sizeObj,
+    };
+
+    if (editingProduct) {
+      setLoadingForm(true);
+      try {
+        const payload = {
+          color: newVar.color,
+          size: newVar.size,
+          sku: newVar.sku,
+          stock: newVar.stock,
+          weight: newVar.weight,
+          prices: newVar.prices,
+          images: newVar.images,
+          showcase: newVar.showcase
+        };
+        await api.products.createVariant(editingProduct._id, payload);
+        const res = await api.products.getById(editingProduct._id);
+        setModalVariants(res.data.variants || []);
+        setVariantForm(prev => ({
+          ...prev,
+          sku: `${editingProduct.sku}-VAR-${Date.now().toString().slice(-4)}`,
+          images: "",
+          showcase: false
+        }));
+        loadProducts();
+      } catch (err) {
+        alert(err.message || "Failed to add variant.");
+      } finally {
+        setLoadingForm(false);
+      }
+    } else {
+      const duplicate = modalVariants.some(v => v.color === newVar.color && v.size === newVar.size);
+      if (duplicate) {
+        alert("A variant with this Color and Size already exists in list.");
+        return;
+      }
+      setModalVariants(prev => [...prev, newVar]);
+      setVariantForm(prev => ({
+        ...prev,
+        sku: `${productForm.sku}-VAR-${Date.now().toString().slice(-4)}`,
+        images: "",
+        showcase: false
+      }));
     }
   };
 
-  const handleDeleteVariant = async (variantId) => {
-    if (!window.confirm("Delete this variant?")) return;
-    try {
-      await api.products.deleteVariant(variantId);
-      const res = await api.products.getById(selectedProductForVariants._id);
-      setSelectedProductForVariants(res.data);
-      loadProducts();
-    } catch (err) {
-      alert(err.message || "Failed to delete variant.");
+  const handleModalRemoveVariant = async (indexOrId, isDbId = false) => {
+    if (!window.confirm("Remove this variant?")) return;
+
+    if (isDbId) {
+      setLoadingForm(true);
+      try {
+        await api.products.deleteVariant(indexOrId);
+        const res = await api.products.getById(editingProduct._id);
+        setModalVariants(res.data.variants || []);
+        loadProducts();
+      } catch (err) {
+        alert(err.message || "Failed to remove variant.");
+      } finally {
+        setLoadingForm(false);
+      }
+    } else {
+      setModalVariants(prev => prev.filter((_, idx) => idx !== indexOrId));
     }
   };
 
@@ -270,7 +399,16 @@ export default function Products() {
                         className="w-11 h-[52px] object-cover rounded border border-border-custom shrink-0"
                       />
                       <div>
-                        <p className="font-semibold text-text-primary text-sm">{p.name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-text-primary text-sm">{p.name}</p>
+                          {p.status === "Draft" ? (
+                            <Badge variant="warning">Draft</Badge>
+                          ) : p.status === "Inactive" ? (
+                            <Badge variant="danger">Inactive</Badge>
+                          ) : (
+                            <Badge variant="success">Active</Badge>
+                          )}
+                        </div>
                         <p className="text-xs text-text-muted mt-0.5 font-mono">{p.slug}</p>
                       </div>
                     </div>
@@ -281,9 +419,6 @@ export default function Products() {
                   <TableCell>{getStockStatus(p)}</TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-1.5">
-                      <Button variant="ghost" size="sm" onClick={() => openVariantsModal(p)} title="Manage Variants">
-                        <Layers size={15} />
-                      </Button>
                       <Button variant="ghost" size="sm" onClick={() => openEditProduct(p)} title="Edit">
                         <Edit2 size={15} />
                       </Button>
@@ -308,7 +443,7 @@ export default function Products() {
         isOpen={isProductModalOpen}
         onClose={() => setIsProductModalOpen(false)}
         title={editingProduct ? "Edit Product" : "Add Product"}
-        maxWidth="max-w-2xl"
+        maxWidth="max-w-4xl"
         footer={
           <>
             <Button variant="secondary" onClick={() => setIsProductModalOpen(false)}>Cancel</Button>
@@ -323,7 +458,8 @@ export default function Products() {
             <Input label="Product Name *" required value={productForm.name} onChange={e => setProductForm({ ...productForm, name: e.target.value })} placeholder="e.g. Cashmere Trench Coat" />
             <Input label="URL Slug *" required value={productForm.slug} onChange={e => setProductForm({ ...productForm, slug: e.target.value })} placeholder="e.g. cashmere-trench-coat" />
             <Input label="SKU *" required value={productForm.sku} onChange={e => setProductForm({ ...productForm, sku: e.target.value })} placeholder="e.g. AUR-TR-CASH" />
-            <Input label="Base Price (₹) *" type="number" required value={productForm.price} onChange={e => setProductForm({ ...productForm, price: e.target.value })} />
+            <Input label="Base Price (MRP) (₹) *" type="number" required value={productForm.price} onChange={e => setProductForm({ ...productForm, price: e.target.value })} />
+            <Input label="Discounted Price (Selling Price) (₹)" type="number" value={productForm.salePrice} onChange={e => setProductForm({ ...productForm, salePrice: e.target.value })} placeholder="Leave blank if no discount" />
             
             <div className="flex flex-col">
               <label className="block text-[13px] font-medium text-text-primary mb-1.5">Brand</label>
@@ -357,8 +493,8 @@ export default function Products() {
               </select>
             </div>
 
-            <div className="flex flex-col">
-              <label className="block text-[13px] font-medium text-text-primary mb-1.5">Availability</label>
+            <div className="flex flex-col col-span-2">
+              <label className="block text-[13px] font-medium text-text-primary mb-1.5">Availability (Will be Draft for new products)</label>
               <select className="w-full bg-white border border-border-custom rounded px-3 py-2 text-sm focus:outline-none focus:border-accent" value={productForm.availability ? "true" : "false"} onChange={e => setProductForm({ ...productForm, availability: e.target.value === "true" })}>
                 <option value="true">Active & Visible</option>
                 <option value="false">Hidden / Draft</option>
@@ -366,38 +502,7 @@ export default function Products() {
             </div>
           </div>
 
-          <div>
-            <label className="block text-[13px] font-medium text-text-primary mb-1.5">Product Images</label>
-            <div className="flex gap-2.5 flex-wrap mb-2.5 items-center">
-              {(productForm.images ? productForm.images.split(",").map(i => i.trim()).filter(Boolean) : []).map((img, idx) => (
-                <div key={idx} className="relative w-[70px] h-[80px] border border-border-custom rounded-md overflow-hidden bg-gray-50">
-                  <img src={resolveImage(img)} alt={`Preview ${idx + 1}`} className="w-full h-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const imgs = productForm.images.split(",").map(i => i.trim()).filter(Boolean);
-                      imgs.splice(idx, 1);
-                      setProductForm({ ...productForm, images: imgs.join(", ") });
-                    }}
-                    className="absolute top-1 right-1 bg-red-500/90 text-white border-none rounded-full w-4 h-4 flex items-center justify-center cursor-pointer text-[10px] leading-none hover:bg-red-600 transition-colors focus:outline-none"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-              <label className="w-[70px] h-[80px] border border-dashed border-gray-300 hover:border-accent rounded-md flex flex-col items-center justify-center cursor-pointer text-text-secondary bg-gray-50 text-[11px] gap-1 transition-colors">
-                <ImageIcon size={16} />
-                <span>Upload</span>
-                <input type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
-              </label>
-            </div>
-            {uploadingImages && <p className="text-xs text-accent mb-2">Uploading images...</p>}
-            <Input
-              value={productForm.images}
-              onChange={e => setProductForm({ ...productForm, images: e.target.value })}
-              placeholder="Or paste image URLs separated by commas..."
-            />
-          </div>
+
 
           <div className="flex flex-col">
             <label className="block text-[13px] font-medium text-text-primary mb-1.5">Description *</label>
@@ -416,93 +521,147 @@ export default function Products() {
             <Input label="Care Instructions" value={productForm.careInstructions} onChange={e => setProductForm({ ...productForm, careInstructions: e.target.value })} placeholder="e.g. Dry clean only" />
           </div>
 
-          {/* Hidden submit button to trigger form submission via footer button */}
-          <button type="submit" className="hidden" />
-        </form>
-      </Modal>
+          <div className="border-t border-border-custom my-4" />
 
-      {/* VARIANTS MODAL */}
-      <Modal
-        isOpen={isVariantModalOpen && !!selectedProductForVariants}
-        onClose={() => setIsVariantModalOpen(false)}
-        title={selectedProductForVariants ? `Manage Variants — ${selectedProductForVariants.name}` : "Manage Variants"}
-        maxWidth="max-w-3xl"
-      >
-        {selectedProductForVariants && (
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
-            {/* Add Form */}
-            <div className="md:col-span-2 md:border-r border-border-custom md:pr-6">
-              <h4 className="text-[13px] font-semibold mb-3.5">Add Variant</h4>
-              <form onSubmit={handleAddVariant} className="flex flex-col gap-3">
+          <h3 className="text-sm font-semibold text-text-primary mb-2">Product Variants ({modalVariants.length})</h3>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 bg-gray-50/50 p-4 rounded-lg border border-border-custom">
+            {/* Add Variant Form */}
+            <div className="lg:col-span-5 flex flex-col gap-3">
+              <h4 className="text-[13px] font-semibold text-text-primary">Add Variant</h4>
+              
+              <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col">
-                  <label className="block text-[13px] font-medium text-text-primary mb-1.5">Color</label>
-                  <select required className="w-full bg-white border border-border-custom rounded px-3 py-2 text-sm focus:outline-none focus:border-accent" value={variantForm.color} onChange={e => setVariantForm({ ...variantForm, color: e.target.value })}>
+                  <label className="block text-xs font-medium text-text-primary mb-1">Color *</label>
+                  <select className="w-full bg-white border border-border-custom rounded px-3 py-1.5 text-xs focus:outline-none focus:border-accent" value={variantForm.color} onChange={e => setVariantForm({ ...variantForm, color: e.target.value })}>
                     <option value="">Select Color</option>
                     {colors.map(c => <option key={c._id} value={c._id}>{c.name} ({c.hex})</option>)}
                   </select>
                 </div>
                 <div className="flex flex-col">
-                  <label className="block text-[13px] font-medium text-text-primary mb-1.5">Size</label>
-                  <select required className="w-full bg-white border border-border-custom rounded px-3 py-2 text-sm focus:outline-none focus:border-accent" value={variantForm.size} onChange={e => setVariantForm({ ...variantForm, size: e.target.value })}>
+                  <label className="block text-xs font-medium text-text-primary mb-1">Size *</label>
+                  <select className="w-full bg-white border border-border-custom rounded px-3 py-1.5 text-xs focus:outline-none focus:border-accent" value={variantForm.size} onChange={e => setVariantForm({ ...variantForm, size: e.target.value })}>
                     <option value="">Select Size</option>
-                    {sizes.map(s => <option key={s._id} value={s._id}>{s.name} ({s.description || "N/A"})</option>)}
+                    {sizes.map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
                   </select>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <Input label="Price (₹)" type="number" required value={variantForm.price} onChange={e => setVariantForm({ ...variantForm, price: e.target.value })} />
-                  <Input label="Stock Qty" type="number" required value={variantForm.stock} onChange={e => setVariantForm({ ...variantForm, stock: e.target.value })} />
+              </div>
+
+              <div className="text-[11px] text-text-secondary bg-gray-100 p-2.5 rounded border border-border-custom font-medium">
+                Pricing details will automatically inherit the product's Base Price (₹{productForm.price || 350})
+                {productForm.salePrice ? ` and Discounted Price (₹${productForm.salePrice})` : ""}.
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Stock Qty *" size="sm" type="number" value={variantForm.stock} onChange={e => setVariantForm({ ...variantForm, stock: e.target.value })} />
+                <Input label="Weight (g) *" size="sm" type="number" value={variantForm.weight} onChange={e => setVariantForm({ ...variantForm, weight: e.target.value })} />
+              </div>
+
+              <Input label="Variant SKU" size="sm" value={variantForm.sku} onChange={e => setVariantForm({ ...variantForm, sku: e.target.value })} placeholder="e.g. AUR-TR-XS-BLK" />
+
+              <div className="flex flex-col gap-2 border-t border-border-custom pt-2">
+                <label className="block text-xs font-semibold text-text-primary">Variant Images</label>
+                <div className="flex gap-2 flex-wrap items-center">
+                  {(variantForm.images ? variantForm.images.split(",").map(i => i.trim()).filter(Boolean) : []).map((img, idx) => (
+                    <div key={idx} className="relative w-[50px] h-[60px] border border-border-custom rounded overflow-hidden bg-gray-50">
+                      <img src={resolveImage(img)} alt={`Variant Preview ${idx + 1}`} className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const imgs = variantForm.images.split(",").map(i => i.trim()).filter(Boolean);
+                          imgs.splice(idx, 1);
+                          setVariantForm({ ...variantForm, images: imgs.join(", ") });
+                        }}
+                        className="absolute top-0.5 right-0.5 bg-red-500/90 text-white border-none rounded-full w-3.5 h-3.5 flex items-center justify-center cursor-pointer text-[9px] leading-none hover:bg-red-600 focus:outline-none"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <label className="w-[50px] h-[60px] border border-dashed border-gray-300 hover:border-accent rounded flex flex-col items-center justify-center cursor-pointer text-text-secondary bg-gray-50 text-[9px] gap-0.5 transition-colors">
+                    <ImageIcon size={12} />
+                    <span>Upload</span>
+                    <input type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
+                  </label>
                 </div>
-                <Input label="Variant SKU" value={variantForm.sku} onChange={e => setVariantForm({ ...variantForm, sku: e.target.value })} placeholder="e.g. AUR-TR-XS-BLK" />
+                {uploadingImages && <p className="text-[10px] text-accent">Uploading images...</p>}
                 
-                <Button type="submit" disabled={loadingForm} loading={loadingForm} className="w-full mt-2">
-                  Add Variant
-                </Button>
-              </form>
+                <div className="flex items-center gap-2 mt-1">
+                  <input
+                    type="checkbox"
+                    id="showcaseCheckbox"
+                    checked={variantForm.showcase || false}
+                    onChange={e => setVariantForm({ ...variantForm, showcase: e.target.checked })}
+                    className="w-3.5 h-3.5 accent-accent cursor-pointer"
+                  />
+                  <label htmlFor="showcaseCheckbox" className="text-xs font-medium text-text-secondary cursor-pointer select-none">
+                    Showcase this variant's image on product page
+                  </label>
+                </div>
+              </div>
+
+              <Button type="button" onClick={handleModalAddVariant} size="sm" className="mt-2 w-full">
+                Add Variant to List
+              </Button>
             </div>
-            
-            {/* Existing Variants */}
-            <div className="md:col-span-3">
-              <h4 className="text-[13px] font-semibold mb-3.5">
-                Existing Variants ({selectedProductForVariants.variants?.length || 0})
-              </h4>
-              {selectedProductForVariants.variants?.length > 0 ? (
-                <div className="max-h-[320px] overflow-y-auto border border-border-custom rounded-lg bg-white">
-                  <Table className="border-0 rounded-none">
-                    <TableHeader>
-                      <TableHead>Color / Size</TableHead>
-                      <TableHead>SKU</TableHead>
-                      <TableHead>Price</TableHead>
-                      <TableHead>Stock</TableHead>
-                      <TableHead></TableHead>
-                    </TableHeader>
-                    <TableBody>
-                      {selectedProductForVariants.variants.map((v) => (
-                        <TableRow key={v._id}>
-                          <TableCell>
-                            <p className="text-[13px] font-medium text-text-primary">{v.size?.name || "—"}</p>
-                            <p className="text-xs text-text-secondary">{v.color?.name || "—"}</p>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-text-secondary">{v.sku}</TableCell>
-                          <TableCell className="text-[13px]">₹{v.price}</TableCell>
-                          <TableCell className="text-[13px]">{v.stock}</TableCell>
-                          <TableCell>
-                            <Button variant="ghost" size="sm" onClick={() => handleDeleteVariant(v._id)} title="Remove" className="text-danger hover:text-red-700">
-                              <Trash2 size={14} />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+
+            {/* Variants List Table */}
+            <div className="lg:col-span-7 flex flex-col">
+              <h4 className="text-[13px] font-semibold text-text-primary mb-2">Variant List</h4>
+              {modalVariants.length > 0 ? (
+                <div className="max-h-[260px] overflow-y-auto border border-border-custom rounded-md bg-white">
+                  <table className="min-w-full divide-y divide-border-custom text-xs">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium text-text-secondary">Color/Size</th>
+                        <th className="px-3 py-2 text-left font-medium text-text-secondary">SKU</th>
+                        <th className="px-3 py-2 text-left font-medium text-text-secondary">Price</th>
+                        <th className="px-3 py-2 text-left font-medium text-text-secondary">Stock</th>
+                        <th className="px-3 py-2 text-left font-medium text-text-secondary">Weight</th>
+                        <th className="px-3 py-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-custom bg-white">
+                      {modalVariants.map((v, idx) => {
+                        const colorName = v.colorDetails?.name || colors.find(c => c._id === v.color)?.name || "—";
+                        const sizeName = v.sizeDetails?.name || sizes.find(s => s._id === v.size)?.name || "—";
+                        const sellingPrice = v.prices?.sellingPrice || v.price || 0;
+                        return (
+                          <tr key={v._id || idx}>
+                            <td className="px-3 py-2">
+                              <p className="font-semibold">{sizeName}</p>
+                              <p className="text-text-secondary text-[10px]">{colorName}</p>
+                            </td>
+                            <td className="px-3 py-2 font-mono text-[10px]">{v.sku}</td>
+                            <td className="px-3 py-2 font-medium">₹{sellingPrice}</td>
+                            <td className="px-3 py-2">{v.stock}</td>
+                            <td className="px-3 py-2">{v.weight}g</td>
+                            <td className="px-3 py-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleModalRemoveVariant(v._id || idx, !!v._id)}
+                                className="text-danger hover:text-red-700 font-semibold focus:outline-none"
+                              >
+                                Remove
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               ) : (
-                <div className="border border-dashed border-gray-300 rounded-lg p-8 text-center text-text-muted text-[13px] bg-gray-50">
-                  No variants yet. Add one using the form.
+                <div className="flex-1 border border-dashed border-gray-300 rounded-md flex items-center justify-center p-6 text-center text-text-muted text-xs bg-white">
+                  No variants added yet. Use the form to add variants.
                 </div>
               )}
             </div>
           </div>
-        )}
+
+          {/* Hidden submit button to trigger form submission via footer button */}
+          <button type="submit" className="hidden" />
+        </form>
       </Modal>
     </div>
   );
