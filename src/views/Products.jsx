@@ -10,7 +10,7 @@ import Card from "../components/ui/Card";
 import { Table, TableHeader, TableHead, TableBody, TableRow, TableCell } from "../components/ui/Table";
 
 const resolveImage = (url) => {
-  if (!url) return "/images/products/placeholder.jpg";
+  if (!url || url === "/images/products/placeholder.jpg") return "";
   if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) {
     return url;
   }
@@ -18,7 +18,7 @@ const resolveImage = (url) => {
     return `http://localhost:3000${url}`;
   }
   if (url.startsWith("/uploads/")) {
-    return `http://localhost:5000${url}`;
+    return `http://localhost:5001${url}`;
   }
   return url;
 };
@@ -37,6 +37,7 @@ export default function Products() {
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [modalVariants, setModalVariants] = useState([]);
+  const [editingVariantIndex, setEditingVariantIndex] = useState(null);
 
   const [productForm, setProductForm] = useState({
     name: "", slug: "", sku: "", brand: "", category: "", subcategory: "",
@@ -162,6 +163,7 @@ export default function Products() {
       stock: 10,
       sku: ""
     });
+    setEditingVariantIndex(null);
     setIsProductModalOpen(true);
   };
 
@@ -191,6 +193,7 @@ export default function Products() {
       stock: 10,
       sku: `${p.sku}-VAR`
     });
+    setEditingVariantIndex(null);
     setIsProductModalOpen(true);
   };
 
@@ -271,7 +274,7 @@ export default function Products() {
     const baseM = Number(productForm.price) || 350;
     const parsedImages = variantForm.images
       ? variantForm.images.split(",").map(i => i.trim()).filter(Boolean)
-      : ["/images/products/placeholder.jpg"];
+      : [];
 
     const newVar = {
       color: variantForm.color,
@@ -290,7 +293,36 @@ export default function Products() {
       sizeDetails: sizeObj,
     };
 
-    if (editingProduct) {
+    if (editingProduct && editingVariantIndex !== null && modalVariants[editingVariantIndex]._id) {
+      setLoadingForm(true);
+      try {
+        const payload = {
+          color: newVar.color,
+          size: newVar.size,
+          sku: newVar.sku,
+          stock: newVar.stock,
+          weight: newVar.weight,
+          prices: newVar.prices,
+          images: newVar.images,
+          showcase: newVar.showcase
+        };
+        await api.products.updateVariant(modalVariants[editingVariantIndex]._id, payload);
+        const res = await api.products.getById(editingProduct._id);
+        setModalVariants(res.data.variants || []);
+        setVariantForm(prev => ({
+          ...prev,
+          sku: `${editingProduct.sku}-VAR-${Date.now().toString().slice(-4)}`,
+          images: "",
+          showcase: false
+        }));
+        setEditingVariantIndex(null);
+        loadProducts();
+      } catch (err) {
+        alert(err.message || "Failed to update variant.");
+      } finally {
+        setLoadingForm(false);
+      }
+    } else if (editingProduct && editingVariantIndex === null) {
       setLoadingForm(true);
       try {
         const payload = {
@@ -319,12 +351,23 @@ export default function Products() {
         setLoadingForm(false);
       }
     } else {
-      const duplicate = modalVariants.some(v => v.color === newVar.color && v.size === newVar.size);
+      const duplicate = modalVariants.some((v, idx) => idx !== editingVariantIndex && v.color === newVar.color && v.size === newVar.size);
       if (duplicate) {
         alert("A variant with this Color and Size already exists in list.");
         return;
       }
-      setModalVariants(prev => [...prev, newVar]);
+      
+      if (editingVariantIndex !== null) {
+        setModalVariants(prev => {
+          const newVariants = [...prev];
+          newVariants[editingVariantIndex] = newVar;
+          return newVariants;
+        });
+        setEditingVariantIndex(null);
+      } else {
+        setModalVariants(prev => [...prev, newVar]);
+      }
+      
       setVariantForm(prev => ({
         ...prev,
         sku: `${productForm.sku}-VAR-${Date.now().toString().slice(-4)}`,
@@ -384,7 +427,8 @@ export default function Products() {
               <TableHead>Product</TableHead>
               <TableHead>SKU</TableHead>
               <TableHead>Category</TableHead>
-              <TableHead>Price</TableHead>
+              <TableHead>MRP</TableHead>
+              <TableHead>Selling Price</TableHead>
               <TableHead>Stock</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableHeader>
@@ -393,11 +437,17 @@ export default function Products() {
                 <TableRow key={p._id}>
                   <TableCell>
                     <div className="flex items-center gap-3">
-                      <img
-                        src={resolveImage(p.images?.[0])}
-                        alt={p.name}
-                        className="w-11 h-[52px] object-cover rounded border border-border-custom shrink-0"
-                      />
+                      <div className="w-11 h-[52px] rounded overflow-hidden bg-gray-100 flex-shrink-0 flex items-center justify-center border border-border-custom">
+                        {p.images && p.images[0] && resolveImage(p.images[0]) ? (
+                          <img
+                            src={resolveImage(p.images[0])}
+                            alt={p.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <ImageIcon className="text-gray-400" size={16} />
+                        )}
+                      </div>
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="font-semibold text-text-primary text-sm">{p.name}</p>
@@ -416,6 +466,9 @@ export default function Products() {
                   <TableCell className="font-mono text-text-secondary text-[13px]">{p.sku}</TableCell>
                   <TableCell className="text-[13px]">{p.category?.name || "Uncategorized"}</TableCell>
                   <TableCell className="font-semibold text-[13px]">₹{p.price}</TableCell>
+                  <TableCell className="font-semibold text-text-primary text-[13px]">
+                    {p.salePrice !== undefined && p.salePrice !== null ? `₹${p.salePrice}` : "-"}
+                  </TableCell>
                   <TableCell>{getStockStatus(p)}</TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-1.5">
@@ -563,23 +616,30 @@ export default function Products() {
                 <label className="block text-xs font-semibold text-text-primary">Variant Images</label>
                 <div className="flex gap-2 flex-wrap items-center">
                   {(variantForm.images ? variantForm.images.split(",").map(i => i.trim()).filter(Boolean) : []).map((img, idx) => (
-                    <div key={idx} className="relative w-[50px] h-[60px] border border-border-custom rounded overflow-hidden bg-gray-50">
-                      <img src={resolveImage(img)} alt={`Variant Preview ${idx + 1}`} className="w-full h-full object-cover" />
+                    <div key={idx} className="relative w-16 h-20 flex-shrink-0 border border-border-custom rounded overflow-hidden bg-gray-50 group">
+                      <img 
+                        src={resolveImage(img)} 
+                        alt={`Variant Preview ${idx + 1}`} 
+                        className="w-full h-full object-cover cursor-pointer"
+                        onClick={() => window.open(resolveImage(img), '_blank')}
+                        title="Click to view full size"
+                      />
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           const imgs = variantForm.images.split(",").map(i => i.trim()).filter(Boolean);
                           imgs.splice(idx, 1);
                           setVariantForm({ ...variantForm, images: imgs.join(", ") });
                         }}
-                        className="absolute top-0.5 right-0.5 bg-red-500/90 text-white border-none rounded-full w-3.5 h-3.5 flex items-center justify-center cursor-pointer text-[9px] leading-none hover:bg-red-600 focus:outline-none"
+                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center cursor-pointer shadow-md z-10 hover:bg-red-600 focus:outline-none"
                       >
-                        ×
+                        <X size={12} strokeWidth={3} />
                       </button>
                     </div>
                   ))}
-                  <label className="w-[50px] h-[60px] border border-dashed border-gray-300 hover:border-accent rounded flex flex-col items-center justify-center cursor-pointer text-text-secondary bg-gray-50 text-[9px] gap-0.5 transition-colors">
-                    <ImageIcon size={12} />
+                  <label className="w-16 h-20 flex-shrink-0 border border-dashed border-gray-300 hover:border-accent rounded flex flex-col items-center justify-center cursor-pointer text-text-secondary bg-gray-50 text-[10px] gap-1 transition-colors">
+                    <ImageIcon size={14} />
                     <span>Upload</span>
                     <input type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
                   </label>
@@ -601,8 +661,27 @@ export default function Products() {
               </div>
 
               <Button type="button" onClick={handleModalAddVariant} size="sm" className="mt-2 w-full">
-                Add Variant to List
+                {editingVariantIndex !== null ? "Save Variant Changes" : "Add Variant to List"}
               </Button>
+              {editingVariantIndex !== null && (
+                <Button 
+                  type="button" 
+                  onClick={() => {
+                    setEditingVariantIndex(null);
+                    setVariantForm(prev => ({
+                      ...prev,
+                      sku: `${productForm.sku}-VAR-${Date.now().toString().slice(-4)}`,
+                      images: "",
+                      showcase: false
+                    }));
+                  }} 
+                  variant="secondary" 
+                  size="sm" 
+                  className="mt-1 w-full"
+                >
+                  Cancel Edit
+                </Button>
+              )}
             </div>
 
             {/* Variants List Table */}
@@ -623,8 +702,8 @@ export default function Products() {
                     </thead>
                     <tbody className="divide-y divide-border-custom bg-white">
                       {modalVariants.map((v, idx) => {
-                        const colorName = v.colorDetails?.name || colors.find(c => c._id === v.color)?.name || "—";
-                        const sizeName = v.sizeDetails?.name || sizes.find(s => s._id === v.size)?.name || "—";
+                        const colorName = v.colorDetails?.name || v.color?.name || colors.find(c => c._id === (v.color?._id || v.color))?.name || "—";
+                        const sizeName = v.sizeDetails?.name || v.size?.name || sizes.find(s => s._id === (v.size?._id || v.size))?.name || "—";
                         const sellingPrice = v.prices?.sellingPrice || v.price || 0;
                         return (
                           <tr key={v._id || idx}>
@@ -636,7 +715,28 @@ export default function Products() {
                             <td className="px-3 py-2 font-medium">₹{sellingPrice}</td>
                             <td className="px-3 py-2">{v.stock}</td>
                             <td className="px-3 py-2">{v.weight}g</td>
-                            <td className="px-3 py-2 text-right">
+                            <td className="px-3 py-2 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setVariantForm({
+                                    color: v.color?._id || v.color || "",
+                                    size: v.size?._id || v.size || "",
+                                    sku: v.sku || "",
+                                    stock: v.stock || 0,
+                                    weight: v.weight || 300,
+                                    mrp: v.prices?.mrp || 350,
+                                    sellingPrice: v.prices?.sellingPrice || 350,
+                                    costPrice: v.prices?.costPrice || 150,
+                                    images: v.images ? (Array.isArray(v.images) ? v.images.filter(i => i && i !== "/images/products/placeholder.jpg").join(", ") : v.images) : "",
+                                    showcase: v.showcase || false
+                                  });
+                                  setEditingVariantIndex(idx);
+                                }}
+                                className="text-accent hover:text-blue-700 font-semibold focus:outline-none mr-3"
+                              >
+                                Edit
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => handleModalRemoveVariant(v._id || idx, !!v._id)}

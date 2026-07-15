@@ -18,7 +18,7 @@ const resolveImage = (url) => {
     return `http://localhost:3000${url}`;
   }
   if (url.startsWith("/uploads/")) {
-    return `http://localhost:5000${url}`;
+    return `http://localhost:5001${url}`;
   }
   return url;
 };

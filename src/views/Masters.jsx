@@ -19,17 +19,23 @@ export default function Masters() {
   const [categoryForm, setCategoryForm] = useState({ name: "", slug: "", description: "" });
   const [subcategoryForm, setSubcategoryForm] = useState({ name: "", slug: "", description: "", parentCategory: "" });
   const [brandForm, setBrandForm] = useState({ name: "", slug: "", description: "" });
-  const [colorForm, setColorForm] = useState({ name: "", hex: "#000000" });
+  const [colorForm, setColorForm] = useState({ name: "", hex: "#000000", colorFamily: "" });
+  const [colorFamilyForm, setColorFamilyForm] = useState({ name: "", slug: "", description: "" });
   const [sizeForm, setSizeForm] = useState({ name: "", description: "" });
   const [collectionForm, setCollectionForm] = useState({ name: "", slug: "", description: "" });
   const [taxForm, setTaxForm] = useState({ name: "", rate: 0 });
 
   const [submitting, setSubmitting] = useState(false);
 
+  // Parent Categories for subcategory creation
+  const [colorFamiliesList, setColorFamiliesList] = useState([]);
+
   useEffect(() => {
     loadTabItems();
     if (activeTab === "subcategory") {
       loadCategoriesList();
+    } else if (activeTab === "color") {
+      loadColorFamiliesList();
     }
   }, [activeTab]);
 
@@ -58,6 +64,19 @@ export default function Masters() {
     }
   }
 
+  async function loadColorFamiliesList() {
+    try {
+      const res = await api.masters.list("color_family");
+      const families = res.data || [];
+      setColorFamiliesList(families);
+      if (families.length > 0) {
+        setColorForm(f => ({ ...f, colorFamily: families[0]._id }));
+      }
+    } catch (err) {
+      console.error("Failed to load color families for select:", err);
+    }
+  }
+
   const handleCreateMaster = async (e) => {
     e.preventDefault();
     setSubmitting(true);
@@ -65,8 +84,9 @@ export default function Masters() {
 
     switch (activeTab) {
       case "category": payload = categoryForm; break;
-      case "subcategory": payload = subcategoryForm; break;
+      case "subcategory": payload = { ...subcategoryForm, category: subcategoryForm.parentCategory }; break;
       case "brand": payload = brandForm; break;
+      case "color_family": payload = colorFamilyForm; break;
       case "color": payload = colorForm; break;
       case "size": payload = sizeForm; break;
       case "collection": payload = collectionForm; break;
@@ -81,7 +101,8 @@ export default function Masters() {
       setCategoryForm({ name: "", slug: "", description: "" });
       setSubcategoryForm(f => ({ name: "", slug: "", description: "", parentCategory: categoriesList[0]?._id || "" }));
       setBrandForm({ name: "", slug: "", description: "" });
-      setColorForm({ name: "", hex: "#000000" });
+      setColorFamilyForm({ name: "", slug: "", description: "" });
+      setColorForm(f => ({ name: "", hex: "#000000", colorFamily: colorFamiliesList[0]?._id || "" }));
       setSizeForm({ name: "", description: "" });
       setCollectionForm({ name: "", slug: "", description: "" });
       setTaxForm({ name: "", rate: 0 });
@@ -107,6 +128,7 @@ export default function Masters() {
     { id: "category", label: "Categories", icon: Tag },
     { id: "subcategory", label: "Subcategories", icon: Bookmark },
     { id: "brand", label: "Brands", icon: Sliders },
+    { id: "color_family", label: "Color Families", icon: Layers },
     { id: "color", label: "Colors", icon: Palette },
     { id: "size", label: "Sizes", icon: Maximize2 },
     { id: "collection", label: "Collections", icon: Layers },
@@ -247,9 +269,50 @@ export default function Masters() {
                 </>
               )}
 
+              {/* Color Family Form Fields */}
+              {activeTab === "color_family" && (
+                <>
+                  <Input
+                    label="Color Family Name"
+                    required
+                    value={colorFamilyForm.name}
+                    onChange={(e) => setColorFamilyForm({ ...colorFamilyForm, name: e.target.value, slug: e.target.value.toLowerCase().replace(/\s+/g, "-") })}
+                    placeholder="E.g., Reds"
+                  />
+                  <Input
+                    label="URL Slug"
+                    required
+                    value={colorFamilyForm.slug}
+                    onChange={(e) => setColorFamilyForm({ ...colorFamilyForm, slug: e.target.value })}
+                  />
+                  <Input
+                    label="Description"
+                    value={colorFamilyForm.description}
+                    onChange={(e) => setColorFamilyForm({ ...colorFamilyForm, description: e.target.value })}
+                    placeholder="Brief description..."
+                    multiline
+                    rows={3}
+                  />
+                </>
+              )}
+
               {/* Color Form Fields */}
               {activeTab === "color" && (
                 <>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] text-text-muted uppercase font-semibold tracking-wider">Color Family</label>
+                    <select
+                      required
+                      value={colorForm.colorFamily}
+                      onChange={(e) => setColorForm({ ...colorForm, colorFamily: e.target.value })}
+                      className="w-full bg-white border border-border-custom rounded px-3 py-2 text-sm focus:outline-none focus:border-accent"
+                    >
+                      <option value="">Select Family</option>
+                      {colorFamiliesList.map((cf) => (
+                        <option key={cf._id} value={cf._id}>{cf.name}</option>
+                      ))}
+                    </select>
+                  </div>
                   <Input
                     label="Color Name"
                     required
